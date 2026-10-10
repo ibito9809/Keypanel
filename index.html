@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Key Manager</title>
+<style>
+:root{--bg:#0f1115;--card:#181b22;--bd:#2a2f3a;--tx:#e8eaf0;--mu:#8b93a7;--ac:#4f8cff;--ok:#2ecc71;--wa:#f5a623;--er:#ff5c5c}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px system-ui,sans-serif;padding:12px;max-width:760px;margin:auto}
+h2{margin:8px 0 12px;font-size:20px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px;margin-bottom:12px}
+label{display:block;color:var(--mu);font-size:12px;margin:10px 0 4px}
+input,select,button{font:inherit;color:var(--tx);background:#10131a;border:1px solid var(--bd);border-radius:8px;padding:9px 10px}
+input,select{width:100%}
+.row{display:flex;gap:8px}.row>*{flex:1}
+button{cursor:pointer;background:#222735}
+button.pri{background:var(--ac);border-color:var(--ac);color:#fff;font-weight:600;width:100%;margin-top:12px}
+button.sm{padding:6px 9px;font-size:13px}
+button.bad{color:var(--er)}button.good{color:var(--ok)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chips button{padding:5px 10px;font-size:13px}
+.badge{font-size:12px;padding:2px 8px;border-radius:99px;border:1px solid}
+.b-ok{color:var(--ok);border-color:var(--ok)}.b-wa{color:var(--wa);border-color:var(--wa)}
+.b-er{color:var(--er);border-color:var(--er)}.b-mu{color:var(--mu);border-color:var(--mu)}
+.key{font:600 16px ui-monospace,monospace;letter-spacing:.5px;word-break:break-all}
+.mu{color:var(--mu);font-size:13px}
+.top{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.dev{border-top:1px solid var(--bd);margin-top:10px;padding-top:8px}
+.hide{display:none}
+#out{border-color:var(--ok)}
+.err{color:var(--er);font-size:13px;margin-top:8px}
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="loginBox" class="card hide">
+  <h2>Admin login</h2>
+  <label>Email</label><input id="em" type="email" autocomplete="username">
+  <label>Password</label><input id="pw" type="password" autocomplete="current-password">
+  <button class="pri" id="loginBtn">Login</button>
+  <div class="err" id="loginErr"></div>
+</div>
+
+<!-- ============ PANEL ============ -->
+<div id="panel" class="hide">
+
+  <div class="top"><h2>Key Manager</h2><button class="sm" id="logoutBtn">Logout</button></div>
+
+  <div class="card">
+    <b>Generate key</b>
+
+    <label>Validity (starts when the user first enters the key)</label>
+    <div class="row">
+      <input id="dur" type="number" min="1" value="3">
+      <select id="unit"><option value="m">Minutes</option><option value="h">Hours</option><option value="d" selected>Days</option></select>
+    </div>
+    <div class="chips" id="chips"></div>
+
+    <label>Who can use this key</label>
+    <select id="lim">
+      <option value="1">One device only (one-time key)</option>
+      <option value="n">Limited number of devices…</option>
+      <option value="0">Unlimited devices</option>
+    </select>
+    <input id="limN" type="number" min="2" value="3" class="hide" style="margin-top:6px">
+
+    <div class="row">
+      <div><label>How many keys</label><input id="qty" type="number" min="1" max="50" value="1"></div>
+      <div><label>Note (optional)</label><input id="note" placeholder="customer name"></div>
+    </div>
+
+    <label>Custom key (optional, else random)</label>
+    <input id="custom" placeholder="leave empty for a random key" autocapitalize="characters">
+
+    <button class="pri" id="genBtn">Generate</button>
+    <div class="err" id="genErr"></div>
+  </div>
+
+  <div class="card hide" id="out"><b>New key(s)</b><div id="outList"></div></div>
+
+  <div class="top" style="margin:6px 0">
+    <b>Keys <span class="mu" id="count"></span></b>
+    <input id="search" placeholder="search key / note / device" style="max-width:55%">
+  </div>
+  <div id="list"></div>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+/* >>> PASTE YOUR FIREBASE WEB CONFIG HERE <<<
+   Console -> Project settings -> General -> Your apps -> Web app -> Config */
+const firebaseConfig = {
+  apiKey: "AIzaSyDMoipLVtcbraE8sY91ACS7buadm4yBw1w",
+  authDomain: "tap-test-keys.firebaseapp.com",
+  projectId: "tap-test-keys",
+  storageBucket: "tap-test-keys.firebasestorage.app",
+  messagingSenderId: "110883142454",
+  appId: "1:110883142454:web:b73623203009ee517a9197"
+};
+
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
+const FV = firebase.firestore.FieldValue;
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const UNIT = { m: 60000, h: 3600000, d: 86400000 };
+
+let docs = [];       // [{id, ...data}]
+let unsub = null;
+
+/* ---------- auth ---------- */
+auth.onAuthStateChanged(u => {
+  $('loginBox').classList.toggle('hide', !!u);
+  $('panel').classList.toggle('hide', !u);
+  if (unsub) { unsub(); unsub = null; }
+  if (u) {
+    unsub = db.collection('keys').orderBy('createdAt', 'desc').onSnapshot(
+      s => { docs = s.docs.map(d => ({ id: d.id, ...d.data() })); render(); },
+      e => { $('list').innerHTML = '<div class="err">' + esc(e.message) + '</div>'; });
+  }
+});
+$('loginBtn').onclick = async () => {
+  $('loginErr').textContent = '';
+  try { await auth.signInWithEmailAndPassword($('em').value.trim(), $('pw').value); }
+  catch (e) { $('loginErr').textContent = e.message; }
+};
+$('logoutBtn').onclick = () => auth.signOut();
+
+/* ---------- generate ---------- */
+[['1h',1,'h'],['6h',6,'h'],['1 day',1,'d'],['3 days',3,'d'],['7 days',7,'d'],['30 days',30,'d']].forEach(([t,v,u]) => {
+  const b = document.createElement('button'); b.textContent = t;
+  b.onclick = () => { $('dur').value = v; $('unit').value = u; };
+  $('chips').appendChild(b);
+});
+$('lim').onchange = () => $('limN').classList.toggle('hide', $('lim').value !== 'n');
+
+function randKey() {
+  const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const r = crypto.getRandomValues(new Uint8Array(16));
+  let s = '';
+  r.forEach((x, i) => { s += A[x % A.length]; if (i % 4 === 3 && i < 15) s += '-'; });
+  return s;
+}
+
+$('genBtn').onclick = async () => {
+  $('genErr').textContent = '';
+  const dur = Number($('dur').value);
+  if (!(dur > 0)) { $('genErr').textContent = 'Enter a valid duration'; return; }
+  const durationMs = Math.round(dur * UNIT[$('unit').value]);
+  let maxDevices = $('lim').value === 'n' ? Number($('limN').value) : Number($('lim').value);
+  if (!(maxDevices >= 0)) maxDevices = 1;
+  const qty = Math.min(50, Math.max(1, Number($('qty').value) || 1));
+  const custom = $('custom').value.trim().toUpperCase();
+  if (custom && !/^[A-Z0-9_-]{6,40}$/.test(custom)) { $('genErr').textContent = 'Custom key: 6-40 chars, A-Z 0-9 - _ only'; return; }
+  const made = [];
+  try {
+    for (let i = 0; i < (custom ? 1 : qty); i++) {
+      const key = custom || randKey();
+      const ref = db.collection('keys').doc(key);
+      if ((await ref.get()).exists) { $('genErr').textContent = key + ' already exists'; break; }
+      await ref.set({
+        durationMs, maxDevices, status: 'active', note: $('note').value.trim(),
+        createdAt: FV.serverTimestamp(), activatedAt: null, devices: {}, blockedDevices: []
+      });
+      made.push(key);
+    }
+  } catch (e) { $('genErr').textContent = e.message; }
+  if (made.length) {
+    $('out').classList.remove('hide');
+    $('outList').innerHTML = made.map(k => '<div class="top" style="margin-top:8px"><span class="key">' + esc(k) +
+      '</span><button class="sm" data-copy="' + esc(k) + '">Copy</button></div>').join('');
+  }
+};
+document.addEventListener('click', e => {
+  const c = e.target.dataset && e.target.dataset.copy;
+  if (c) { navigator.clipboard.writeText(c); e.target.textContent = 'Copied'; setTimeout(() => e.target.textContent = 'Copy', 1200); }
+});
+
+/* ---------- list ---------- */
+const ms = t => t && t.toMillis ? t.toMillis() : 0;
+const fmt = t => t ? new Date(ms(t)).toLocaleString() : '-';
+function human(msLeft) {
+  const m = Math.floor(msLeft / 60000), d = Math.floor(m / 1440), h = Math.floor(m / 60) % 24;
+  return d ? `${d}d ${h}h ${m % 60}m` : `${h}h ${m % 60}m`;
+}
+function durText(ms) {
+  if (ms % UNIT.d === 0) return ms / UNIT.d + ' day(s)';
+  if (ms % UNIT.h === 0) return ms / UNIT.h + ' hour(s)';
+  return Math.round(ms / UNIT.m) + ' min';
+}
+function state(k) {
+  if (k.status === 'blocked') return ['Blocked', 'b-er'];
+  if (!k.activatedAt) return ['Not used yet', 'b-mu'];
+  const left = ms(k.activatedAt) + k.durationMs - Date.now();
+  if (left <= 0) return ['Expired', 'b-wa'];
+  return ['Active · ' + human(left) + ' left', 'b-ok'];
+}
+
+function render() {
+  const q = $('search').value.trim().toLowerCase();
+  const list = docs.filter(k => !q || (k.id + ' ' + (k.note || '') + ' ' +
+    Object.values(k.devices || {}).map(d => (d.model || '') + (d.brand || '')).join(' ')).toLowerCase().includes(q));
+  $('count').textContent = '(' + list.length + ')';
+  $('list').innerHTML = list.map(k => {
+    const [st, cls] = state(k);
+    const devs = Object.entries(k.devices || {});
+    const bl = k.blockedDevices || [];
+    const lim = k.maxDevices === 0 ? 'unlimited' : k.maxDevices;
+    return `<div class="card">
+      <div class="top"><span class="key">${esc(k.id)}</span><span class="badge ${cls}">${esc(st)}</span></div>
+      <div class="mu">${esc(durText(k.durationMs))} · devices ${devs.length}/${lim}${k.note ? ' · ' + esc(k.note) : ''}</div>
+      <div class="mu">First used: ${fmt(k.activatedAt)}${k.activatedAt ? ' · Ends: ' + new Date(ms(k.activatedAt) + k.durationMs).toLocaleString() : ''}</div>
+      ${devs.map(([id, d]) => `<div class="dev">
+        <b>${esc(d.brand)} ${esc(d.model)}</b> ${bl.includes(id) ? '<span class="badge b-er">blocked</span>' : ''}
+        <div class="mu">Android ${esc(d.android)} · app ${esc(d.appVer)}<br>First ${fmt(d.firstSeen)} · Last seen ${fmt(d.lastSeen)}<br>ID ${esc(id)}</div>
+        <div class="acts">
+          <button class="sm ${bl.includes(id) ? 'good' : 'bad'}" data-a="${bl.includes(id) ? 'dunblock' : 'dblock'}" data-k="${esc(k.id)}" data-d="${esc(id)}">${bl.includes(id) ? 'Unblock device' : 'Block device'}</button>
+          <button class="sm" data-a="dremove" data-k="${esc(k.id)}" data-d="${esc(id)}">Remove device</button>
+        </div></div>`).join('')}
+      <div class="acts">
+        <button class="sm" data-copy="${esc(k.id)}">Copy</button>
+        <button class="sm ${k.status === 'blocked' ? 'good' : 'bad'}" data-a="${k.status === 'blocked' ? 'unblock' : 'block'}" data-k="${esc(k.id)}">${k.status === 'blocked' ? 'Unblock key' : 'Block key'}</button>
+        <button class="sm" data-a="extend" data-k="${esc(k.id)}">+ Time</button>
+        <button class="sm" data-a="limit" data-k="${esc(k.id)}">Device limit</button>
+        <button class="sm bad" data-a="delete" data-k="${esc(k.id)}">Delete</button>
+      </div></div>`;
+  }).join('') || '<div class="mu">No keys yet</div>';
+}
+$('search').oninput = render;
+setInterval(() => { if (docs.length) render(); }, 30000);
+
+/* ---------- actions ---------- */
+$('list').addEventListener('click', async e => {
+  const a = e.target.dataset.a; if (!a) return;
+  const k = e.target.dataset.k, d = e.target.dataset.d, ref = db.collection('keys').doc(k);
+  try {
+    if (a === 'block') await ref.update({ status: 'blocked' });
+    else if (a === 'unblock') await ref.update({ status: 'active' });
+    else if (a === 'dblock') await ref.update({ blockedDevices: FV.arrayUnion(d) });
+    else if (a === 'dunblock') await ref.update({ blockedDevices: FV.arrayRemove(d) });
+    else if (a === 'dremove') {
+      if (confirm('Remove this device? It loses access and its slot becomes free (it can re-enter the key if a slot is free; use Block to ban it).'))
+        await ref.update(new firebase.firestore.FieldPath('devices', d), FV.delete());
+    }
+    else if (a === 'delete') { if (confirm('Delete key ' + k + '?')) await ref.delete(); }
+    else if (a === 'extend') {
+      const v = prompt('Add time. Examples: 30m, 12h, 2d'); if (!v) return;
+      const m = v.trim().match(/^(\d+(?:\.\d+)?)\s*([mhd])$/i); if (!m) return alert('Use e.g. 30m, 12h, 2d');
+      await ref.update({ durationMs: FV.increment(Math.round(Number(m[1]) * UNIT[m[2].toLowerCase()])) });
+    }
+    else if (a === 'limit') {
+      const v = prompt('Max devices (0 = unlimited)'); if (v === null) return;
+      const n = Number(v); if (!(n >= 0)) return alert('Invalid');
+      await ref.update({ maxDevices: Math.floor(n) });
+    }
+  } catch (err) { alert(err.message); }
+});
+</script>
+</body>
+</html>
